@@ -89,15 +89,10 @@ const Index = () => {
             </div>
 
             {/* Main Content Area */}
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-3">
               {activeTab === 'swap' && <SwapAssistant />}
               {activeTab === 'crosschain' && <CrossChainSwapAssistant />}
-              {activeTab === 'history' && <TransactionHistory />}
-            </div>
-
-            {/* Right Sidebar */}
-            <div className="lg:col-span-1">
-              <SmartRecommendations />
+              {/* {activeTab === 'history' && <TransactionHistory />} */}
             </div>
           </div>
         )}

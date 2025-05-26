@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchCrossChainQuoteFromBackend } from '../lib/api';
+import { fetchCrossChainQuoteFromBackend, fetchSwapFromBackend } from '../lib/api';
 import { CHAIN_INDEX_TO_NAME } from '../lib/utils';
 import { useAvailableChains, useOkxTokenListByChain } from '../hooks/useChainAndTokenList';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
@@ -19,6 +19,20 @@ import {
   PopoverTrigger,
 } from "./ui/popover";
 import { Button } from "./ui/button";
+// Add imports for Solana transaction building
+import {
+  Connection,
+  PublicKey,
+  TransactionMessage,
+  VersionedTransaction,
+  TransactionInstruction,
+  AddressLookupTableAccount,
+  VersionedMessage, // Although V0.compile is used, keep import for clarity if needed elsewhere
+} from '@solana/web3.js';
+// Add imports for AppKit Solana hooks
+import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
+import { useAppKitConnection } from '@reown/appkit-adapter-solana/react';
+import type { Provider as SolanaProvider } from "@reown/appkit-adapter-solana";
 
 // Add this helper function at the top level of the file, before the component
 const getChainDisplayName = (chainId: string) => {
@@ -55,6 +69,11 @@ const CrossChainSwapAssistant: React.FC = () => {
   // Use wagmi hooks for wallet connection
   const { address: account, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
+
+  // Use AppKit hooks for overall and Solana wallet connection
+  const { isConnected: isAppKitConnected, address: appKitAddress } = useAppKitAccount();
+  const { walletProvider: solanaWalletProvider } = useAppKitProvider<SolanaProvider>("solana");
+  const { connection: solanaConnection } = useAppKitConnection();
 
   // Check if destination chain is Solana
   const isSolanaDestination = toChain === '501';
@@ -123,25 +142,28 @@ const CrossChainSwapAssistant: React.FC = () => {
     }
   };
 
-  // Update handleSwap to include better error handling
+  // Update handleSwap to include better error handling and Solana transaction logic
   async function handleSwap() {
     if (!quote) {
       toast.error('Get a quote first');
       return;
     }
-    if (!isConnected || !account) {
-      toast.error('Connect your wallet');
-      return;
+    // Check connection based on the source chain
+    if (fromChain !== '501' && (!isConnected || !account)) { // EVM source chain check
+        toast.error('Connect your EVM wallet');
+        return;
+    } else if (fromChain === '501' && (!isAppKitConnected || !appKitAddress)) { // Solana source chain check
+         toast.error('Connect your Solana wallet');
+         return;
     }
 
-    if (isSolanaDestination && !solanaAddress) {
-      toast.error('Enter Solana address');
-      return;
-    }
+    // Check if destination chain is Solana and receive address is provided if needed
+    // Assuming appKitAddress is used as receiveAddress for Solana destination if not manually set
+    const finalReceiveAddress = isSolanaDestination && solanaAddress ? solanaAddress : (fromChain === '501' ? appKitAddress : account);
 
-    if (!walletClient) {
-      toast.error('Wallet not found');
-      return;
+    if (isSolanaDestination && !finalReceiveAddress) {
+        toast.error('Enter Solana receive address');
+        return;
     }
 
     setSwapping(true);
@@ -150,6 +172,7 @@ const CrossChainSwapAssistant: React.FC = () => {
     setTxHash(null);
 
     try {
+      // Fetch swap data from backend
       const res = await fetch('http://localhost:4000/crosschain/swap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -160,52 +183,128 @@ const CrossChainSwapAssistant: React.FC = () => {
           fromToken,
           toToken,
           amount,
-          userWalletAddress: account,
-          receiveAddress: isSolanaDestination ? solanaAddress : account
+          userWalletAddress: fromChain === '501' ? appKitAddress : account, // Use correct address based on source chain
+          receiveAddress: finalReceiveAddress
         }),
       });
 
       if (!res.ok) {
         throw new Error(await res.text() || 'Swap failed');
       }
-
       const data = await res.json();
-      
+
       if (!data.txData) {
         throw new Error('No transaction data');
       }
 
       try {
-        const txHash = await walletClient.sendTransaction({
-          account: account as `0x${string}`,
-          chain: undefined,
-          to: data.txData.to as `0x${string}`,
-          data: data.txData.data as `0x${string}`,
-          value: BigInt(data.txData.value || 0),
-          gas: BigInt(data.txData.gasLimit),
-          gasPrice: BigInt(data.txData.gasPrice),
-          kzg: undefined
-        });
-        
-        if (!txHash) {
-          throw new Error('Transaction failed');
+        let txHash = null;
+
+        if (fromChain !== '501') { // EVM source chain
+            if (!walletClient) {
+                 toast.error('EVM Wallet not found');
+                 throw new Error('EVM Wallet not found');
+            }
+             // EVM transaction sending logic using walletClient
+            txHash = await walletClient.sendTransaction({
+              account: account as `0x${string}`,
+              chain: undefined,
+              to: data.txData.to as `0x${string}`,
+              data: data.txData.data as `0x${string}` || '0x',
+              value: data.txData.value ? BigInt(data.txData.value) : 0n,
+              gas: data.txData.gasLimit ? BigInt(data.txData.gasLimit) : undefined,
+              // Use either gasPrice or maxPriorityFeePerGas based on network type
+              ...(data.txData.maxPriorityFeePerGas ? {
+                maxPriorityFeePerGas: BigInt(data.txData.maxPriorityFeePerGas),
+                maxFeePerGas: data.txData.maxFeePerGas ? BigInt(data.txData.maxFeePerGas) : undefined
+              } : {
+                gasPrice: data.txData.gasPrice ? BigInt(data.txData.gasPrice) : undefined
+              }),
+              kzg: undefined,
+            });
+
+        } else { // Solana source chain (fromChain === '501')
+             if (!solanaWalletProvider || !solanaWalletProvider.sendTransaction || !solanaConnection) {
+                toast.error('Solana Wallet provider not ready');
+                throw new Error('Solana Wallet provider not ready');
+             }
+
+            // Assuming backend returns instructionLists and addressLookupTableAccount for Solana source
+            if (!data.txData.instructionLists || !Array.isArray(data.txData.instructionLists) || !data.txData.addressLookupTableAccount || !Array.isArray(data.txData.addressLookupTableAccount)) {
+                 throw new Error('Invalid Solana transaction data received from backend.');
+            }
+
+             // Fetch recent blockhash
+            const { blockhash } = await solanaConnection.getLatestBlockhash();
+
+            // Convert raw instructions to TransactionInstruction objects
+            const instructions = data.txData.instructionLists.map((ix: any) => new TransactionInstruction({
+                keys: ix.accounts.map((key: any) => ({
+                    pubkey: new PublicKey(key.pubkey),
+                    isSigner: key.isSigner,
+                    isWritable: key.isWritable,
+                })),
+                programId: new PublicKey(ix.programId),
+                data: ix.data ? Buffer.from(ix.data, 'base64') : Buffer.from(''), // Handle potential missing data
+            }));
+
+            // Get Address Lookup Table accounts
+            const addressLookupTableAccounts = await Promise.all(
+              data.txData.addressLookupTableAccount.map(async (accountKey: string) => {
+                  const accountPubkey = new PublicKey(accountKey);
+                   // AppKit's connection might provide a helper, or use standard connection
+                  const account = await solanaConnection.getAddressLookupTable(accountPubkey);
+                  if (!account || !account.value) throw new Error(`Failed to fetch Address Lookup Table account: ${accountKey}`);
+                  return account.value;
+              })
+            );
+
+            // Create and compile the TransactionMessage to a V0 message
+             const messageV0 = new TransactionMessage({
+                payerKey: new PublicKey(appKitAddress!), // Use appKitAddress as payer
+                recentBlockhash: blockhash,
+                instructions: instructions,
+            }).compileToV0Message(addressLookupTableAccounts);
+
+
+            // Create VersionedTransaction
+            const transaction = new VersionedTransaction(messageV0);
+
+            // Signers from backend might be needed for some cross-chain scenarios
+            // if (data.txData.signers && Array.isArray(data.txData.signers)) {
+            //    // You would need to convert raw signer data to Keypair or similar
+            //    // and call transaction.sign(...);
+            // }
+
+
+            // Send the constructed transaction using the solanaWalletProvider
+            // The sendTransaction method typically expects the transaction and the connection
+            txHash = await solanaWalletProvider.sendTransaction(transaction, solanaConnection);
+
         }
-        
+
+        if (!txHash) {
+          throw new Error('Transaction sending failed, no hash received.');
+        }
+
         setTxHash(txHash);
         setTxStatus('pending');
         toast.success('Transaction sent!');
         pollTxStatus(txHash);
       } catch (txError: any) {
+        console.error('Frontend: Error sending transaction:', txError);
         if (txError.message?.includes('insufficient funds')) {
           toast.error('Insufficient balance');
         } else if (txError.message?.includes('user rejected')) {
           toast.error('Transaction cancelled');
         } else {
-          toast.error('Transaction failed');
+          toast.error(txError.message || 'Transaction failed');
         }
+        setError(txError.message || 'Transaction failed');
         throw txError;
       }
     } catch (e: any) {
+      console.error('Frontend: Error in handleSwap:', e);
       const errorMessage = e.message || 'Swap failed';
       setError(errorMessage);
       toast.error('Swap failed');
@@ -214,7 +313,7 @@ const CrossChainSwapAssistant: React.FC = () => {
     }
   }
 
-  // Update pollTxStatus to include toast notifications
+  // Update pollTxStatus to include toast notifications - Assuming this function works for both EVM and Solana
   async function pollTxStatus(hash: string) {
     setTxStatus('pending');
     let attempts = 0;
@@ -224,10 +323,10 @@ const CrossChainSwapAssistant: React.FC = () => {
     async function check() {
       attempts++;
       try {
-        const res = await fetch(`http://localhost:4000/crosschain/tx-status?txHash=${hash}`);
+        const res = await fetch(`http://localhost:4000/crosschain/tx-status?txHash=${hash}&chainIndex=${fromChain}`);
         if (!res.ok) throw new Error(await res.text() || 'Status check failed');
         const data = await res.json();
-        
+
         if (data.status === 'success') {
           setTxStatus('success');
           toast.success('Swap completed!');
@@ -238,6 +337,7 @@ const CrossChainSwapAssistant: React.FC = () => {
           return;
         }
       } catch (e) {
+        console.error('Frontend: Error polling transaction status:', e);
         setTxStatus('error');
         toast.error('Status check failed');
         return;
@@ -250,7 +350,8 @@ const CrossChainSwapAssistant: React.FC = () => {
         toast.error('Status check timed out');
       }
     }
-    check();
+
+    setTimeout(check, interval);
   }
 
   return (
