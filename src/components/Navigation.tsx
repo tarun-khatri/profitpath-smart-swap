@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Button } from '@/components/ui/button';
 
@@ -10,6 +9,7 @@ interface NavigationProps {
 export const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
   const tabs = [
     { id: 'swap', label: 'Swap Assistant', icon: '🔄' },
+    { id: 'crosschain', label: 'Cross Chain Swap Assistant', icon: '🌉' },
     { id: 'history', label: 'History', icon: '📊' },
   ];
 

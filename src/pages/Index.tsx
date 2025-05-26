@@ -1,15 +1,24 @@
-
-import React, { useState } from 'react';
+import { useAccount } from 'wagmi';
+import React, { useState, useEffect } from 'react';
 import { WalletConnection } from '../components/WalletConnection';
 import { Portfolio } from '../components/Portfolio';
 import { SwapAssistant } from '../components/SwapAssistant';
 import { SmartRecommendations } from '../components/SmartRecommendations';
 import { TransactionHistory } from '../components/TransactionHistory';
 import { Navigation } from '../components/Navigation';
+import CrossChainSwapAssistant from '../components/CrossChainSwapAssistant';
+import { useAppKitAccount } from '@reown/appkit/react';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState('swap');
-  const [walletConnected, setWalletConnected] = useState(false);
+  const { isConnected: isEvmConnected } = useAccount();
+  const { isConnected: isAppKitConnected } = useAppKitAccount();
+
+  useEffect(() => {
+    if (isEvmConnected || isAppKitConnected) {
+      setActiveTab('swap');
+    }
+  }, [isEvmConnected, isAppKitConnected]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
@@ -28,18 +37,14 @@ const Index = () => {
                 OKX × Solana
               </span>
             </div>
-            <WalletConnection 
-              isConnected={walletConnected} 
-              onConnect={() => setWalletConnected(true)}
-              onDisconnect={() => setWalletConnected(false)}
-            />
+            <WalletConnection />
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
-        {!walletConnected ? (
+        {!isEvmConnected && !isAppKitConnected ? (
           <div className="text-center py-20">
             <div className="max-w-2xl mx-auto">
               <h2 className="text-4xl font-bold text-white mb-6">
@@ -86,6 +91,7 @@ const Index = () => {
             {/* Main Content Area */}
             <div className="lg:col-span-2">
               {activeTab === 'swap' && <SwapAssistant />}
+              {activeTab === 'crosschain' && <CrossChainSwapAssistant />}
               {activeTab === 'history' && <TransactionHistory />}
             </div>
 
