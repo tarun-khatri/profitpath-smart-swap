@@ -75,7 +75,7 @@ export async function fetchSwapFromBackend(params: {
 }) {
   try {
     console.log('Frontend: Calling backend /quotes/swap with params:', params); // Log frontend call params
-    const response = await fetch('http://localhost:4000/quotes/swap', {
+    const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/quotes/swap`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
