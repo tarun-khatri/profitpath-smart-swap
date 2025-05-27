@@ -35,14 +35,14 @@ export const Portfolio: React.FC = () => {
         setError(null);
 
         // Fetch total value
-        const totalValueResponse = await axios.get(`http://localhost:4000/portfolio/total-value?address=${address}`);
+        const totalValueResponse = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/portfolio/total-value?address=${address}`);
         if (totalValueResponse.data.error) {
           throw new Error(totalValueResponse.data.error);
         }
         const totalValue = totalValueResponse.data.data[0].totalValue;
 
         // Fetch token balances
-        const tokenBalancesResponse = await axios.get(`http://localhost:4000/portfolio/token-balances?address=${address}`);
+        const tokenBalancesResponse = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/portfolio/token-balances?address=${address}`);
         if (tokenBalancesResponse.data.error) {
           throw new Error(tokenBalancesResponse.data.error);
         }

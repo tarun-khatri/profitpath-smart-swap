@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 // Removed old Select dropdown imports; using modal-based chain selector now.
-import { useAvailableChains, useOkxTokenListByChain } from '@/hooks/useChainAndTokenList';
+import { useAvailableChains, useTokensByChain } from '../hooks/useChainAndTokenList';
 import { cn } from '@/lib/utils';
 import { MagnifyingGlassIcon } from '@radix-ui/react-icons';
 import { Dialog, DialogContent, DialogTrigger, DialogTitle, DialogDescription } from "./ui/dialog";
@@ -31,6 +31,7 @@ import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
 import { useAppKitConnection } from '@reown/appkit-adapter-solana/react';
 import type { Provider as SolanaProvider } from "@reown/appkit-adapter-solana";
 import { VersionedTransaction, TransactionInstruction, PublicKey, VersionedMessage, AddressLookupTableAccount, TransactionMessage, SystemProgram } from '@solana/web3.js';
+import AISwapChat from './AISwapChat';
 
 declare global {
   interface Window {
@@ -69,10 +70,11 @@ export const SwapAssistant: React.FC = () => {
   const [swapError, setSwapError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [txStatus, setTxStatus] = useState<'pending' | 'success' | 'failed' | null>(null);
+  const [isAIMode, setIsAIMode] = useState(false);
 
   const { chains: availableChains, loading: chainsLoading } = useAvailableChains();
-  const { tokens: fromTokens, loading: fromTokensLoading, error: fromTokensError } = useOkxTokenListByChain(fromChain);
-  const { tokens: toTokens, loading: toTokensLoading, error: toTokensError } = useOkxTokenListByChain(toChain);
+  const { tokens: fromTokens, loading: fromTokensLoading, error: fromTokensError } = useTokensByChain(fromChain);
+  const { tokens: toTokens, loading: toTokensLoading, error: toTokensError } = useTokensByChain(toChain);
 
   // Deduplicate and filter availableChains for modal, only show name (no icon)
   const uniqueChains = Array.from(new Set(availableChains.map(String)))
@@ -89,7 +91,7 @@ export const SwapAssistant: React.FC = () => {
   // Function to check transaction status
   const checkTransactionStatus = async (hash: string) => {
     try {
-      const response = await fetch(`http://localhost:4000/quotes/transaction-status?chainIndex=${fromChain}&txHash=${hash}`);
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/quotes/transaction-status?chainIndex=${fromChain}&txHash=${hash}`);
       const data = await response.json();
       
       if (data.status === 'success') {
@@ -200,7 +202,7 @@ export const SwapAssistant: React.FC = () => {
 
         try {
           // Get Solana swap instructions and lookup tables from OKX API
-          const swapRes = await fetch(`http://localhost:4000/quotes/swap`, {
+          const swapRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/quotes/swap`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -402,6 +404,75 @@ export const SwapAssistant: React.FC = () => {
   return (
     <Card className="bg-[#1a1333] border border-[#2d225a] shadow-lg rounded-xl p-0">
       <CardContent className="space-y-6 px-6 py-6">
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-bold text-white">
+              AI Swap Assistant
+            </h3>
+            <button
+              onClick={() => setIsAIMode(!isAIMode)}
+              className="px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition"
+            >
+              {isAIMode ? 'Manual Mode' : 'AI Mode'}
+            </button>
+          </div>
+          
+          {isAIMode && (
+            <AISwapChat
+              onSwapInterpretation={(interpretation) => {
+                console.log('AI Interpretation received:', interpretation);
+                
+                // Always attempt to set values if AI provides them, even if null (resets the field)
+                setFromChain(interpretation.fromChain || null);
+                setToChain(interpretation.toChain || null);
+                setFromToken(interpretation.fromToken || '');
+                setToToken(interpretation.toToken || '');
+                setAmount(interpretation.amount || '');
+                
+                console.log('State updates triggered with values:', {
+                  fromChain: interpretation.fromChain,
+                  toChain: interpretation.toChain,
+                  fromToken: interpretation.fromToken,
+                  toToken: interpretation.toToken,
+                  amount: interpretation.amount
+                });
+                
+                // Only attempt to get a quote if *essential* fields are present for single-chain
+                // Need fromChain, toChain, fromToken, toToken, amount
+                if (interpretation.fromChain && interpretation.toChain && 
+                    interpretation.fromToken && interpretation.toToken && 
+                    interpretation.amount) {
+                  console.log('All required fields present, triggering quote fetch...');
+                  // Delay slightly to allow state updates to propagate
+                  setTimeout(() => {
+                    console.log('Executing quote fetch with current state:', {
+                      fromChain,
+                      toChain,
+                      fromToken,
+                      toToken,
+                      amount
+                    });
+                    handleGetQuote();
+                  }, 100); // Increased delay to ensure state updates
+                } else {
+                  console.log('Missing required fields for quote:', {
+                    fromChain: interpretation.fromChain,
+                    toChain: interpretation.toChain,
+                    fromToken: interpretation.fromToken,
+                    toToken: interpretation.toToken,
+                    amount: interpretation.amount
+                  });
+                }
+              }}
+              isCrossChain={false}
+              availableChains={availableChains}
+              fromTokens={fromTokens}
+              toTokens={toTokens}
+              currentFromChain={fromChain}
+              currentToChain={toChain}
+            />
+          )}
+        </div>
         {/* You Pay Section */}
         <div className="bg-[#18122b] rounded-lg p-4 border border-[#2d225a] mb-4">
           <div className="flex justify-between items-center mb-2">
